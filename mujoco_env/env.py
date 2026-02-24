@@ -57,6 +57,7 @@ class PandaPickPlaceEnv:
         self.step_count = 0
         self.last_action = np.zeros(4, dtype=float)
         self.current_ee_target = np.array([0.52, 0.0, 0.30], dtype=float)
+        self.reference_ee_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
         if self.config.render:
             self._open_viewer()
 
@@ -107,6 +108,7 @@ class PandaPickPlaceEnv:
         if hasattr(self.data, "eq_active"):
             self.data.eq_active[self.controller.weld_id] = 0
         self.controller.grasp_attached = False
+        self.controller.contact_persistence_steps = 0
 
     def _sample_xy(self, existing: list[np.ndarray], *, min_dist: float = 0.10) -> np.ndarray:
         x_low, y_low = self.config.workspace_low[:2]
@@ -149,6 +151,7 @@ class PandaPickPlaceEnv:
         self.step_count = 0
         self.last_action = np.zeros(4, dtype=float)
         self.current_ee_target = np.array(self.data.site_xpos[self.controller.ee_site_id], dtype=float)
+        self.reference_ee_quat = self.controller.current_ee_quat()
         self.model.site_pos[self.ee_target_site_id] = self.current_ee_target
         obs = self._get_observation(self.last_action)
         self.logger.log_event("reset", layout)
@@ -245,6 +248,8 @@ class PandaPickPlaceEnv:
             errors.append("Non-finite ee_pos detected.")
         if float(np.max(np.abs(qvel))) > 80.0:
             errors.append("Joint velocity exceeded 80 rad/s-equivalent limit.")
+        if self.controller.joint_limit_min_margin() < 0.004:
+            errors.append("Arm joint reached near-limit unsafe margin (<0.004 rad).")
         if target_pos[2] < -0.01:
             errors.append("Target cube dropped below floor.")
         if float(np.linalg.norm(target_pos - goal_pos)) > 1.5:
@@ -266,11 +271,17 @@ class PandaPickPlaceEnv:
         self.current_ee_target = self._rate_limit_ee_target(action[:3])
         gripper_closed = bool(action[3] > 0.5)
         self.model.site_pos[self.ee_target_site_id] = self.current_ee_target
+        use_orient_lock = gripper_closed or self.current_ee_target[2] < 0.16
+        ee_target_quat = self.reference_ee_quat if use_orient_lock else None
 
         attachment_changed = False
         for _ in range(self.config.frame_skip):
             attached_before = self.controller.grasp_attached
-            ctrl_info = self.controller.apply(self.current_ee_target, gripper_closed=gripper_closed)
+            ctrl_info = self.controller.apply(
+                self.current_ee_target,
+                gripper_closed=gripper_closed,
+                ee_target_quat=ee_target_quat,
+            )
             mujoco.mj_step(self.model, self.data)
             if ctrl_info["grasp_attached"] != attached_before:
                 attachment_changed = True
@@ -289,7 +300,14 @@ class PandaPickPlaceEnv:
             "sanity_errors": sanity_errors,
             "grasp_attached": bool(self.controller.grasp_attached),
             "attachment_changed": attachment_changed,
+            "joint_limit_min_margin": self.controller.joint_limit_min_margin(),
         }
+        if info["joint_limit_min_margin"] < 0.03:
+            self.logger.log_event(
+                "joint_limit_warning",
+                {"joint_limit_min_margin": info["joint_limit_min_margin"]},
+                step=self.step_count,
+            )
         if attachment_changed:
             self.logger.log_event(
                 "grasp_state_changed",
@@ -297,6 +315,8 @@ class PandaPickPlaceEnv:
                     "attached": bool(self.controller.grasp_attached),
                     "target_hand_contact": obs["contacts_summary"]["target_hand_contact"],
                     "gripper_closed_cmd": gripper_closed,
+                    "contact_persistence_steps": ctrl_info["contact_persistence_steps"],
+                    "target_rel_speed_ok": ctrl_info["target_rel_speed_ok"],
                 },
                 step=self.step_count,
             )
@@ -352,29 +372,29 @@ def main() -> None:
             target = np.array(obs["target_pos"], dtype=float)
             goal = np.array(obs["goal_pos"], dtype=float)
 
-            pre_grasp = np.array([target[0], target[1], max(target[2] + 0.16, 0.14)], dtype=float)
-            grasp = np.array([target[0], target[1], max(target[2] + 0.08, 0.08)], dtype=float)
-            lift = np.array([target[0], target[1], 0.24], dtype=float)
-            pre_place = np.array([goal[0], goal[1], 0.24], dtype=float)
-            place = np.array([goal[0], goal[1], 0.10], dtype=float)
+            pre_grasp = np.array([target[0], target[1], max(target[2] + 0.13, 0.13)], dtype=float)
+            grasp = np.array([target[0], target[1], max(target[2] + 0.038, 0.060)], dtype=float)
+            lift = np.array([target[0], target[1], 0.23], dtype=float)
+            pre_place = np.array([goal[0], goal[1], 0.23], dtype=float)
+            place = np.array([goal[0], goal[1], 0.085], dtype=float)
 
             if progress < 0.20:
                 alpha = progress / 0.20
                 ee_cmd = (1.0 - alpha) * start_ee + alpha * pre_grasp
                 gripper = 0.0
-            elif progress < 0.45:
-                alpha = (progress - 0.20) / 0.25
+            elif progress < 0.48:
+                alpha = (progress - 0.20) / 0.28
                 ee_cmd = (1.0 - alpha) * pre_grasp + alpha * grasp
                 gripper = 0.0
-            elif progress < 0.55:
+            elif progress < 0.60:
                 ee_cmd = grasp
                 gripper = 1.0
-            elif progress < 0.70:
-                alpha = (progress - 0.55) / 0.15
+            elif progress < 0.74:
+                alpha = (progress - 0.60) / 0.14
                 ee_cmd = (1.0 - alpha) * grasp + alpha * lift
                 gripper = 1.0
             elif progress < 0.88:
-                alpha = (progress - 0.70) / 0.18
+                alpha = (progress - 0.74) / 0.14
                 ee_cmd = (1.0 - alpha) * lift + alpha * pre_place
                 gripper = 1.0
             elif progress < 0.96:

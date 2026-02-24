@@ -22,13 +22,20 @@ ARM_JOINT_NAMES: tuple[str, ...] = (
 
 @dataclass
 class EEControllerConfig:
-    damping: float = 1e-3
-    ik_step_size: float = 0.35
-    max_delta_q: float = 0.08
-    use_orientation: bool = False
-    orientation_weight: float = 0.2
+    damping: float = 3e-2
+    ik_step_size: float = 0.22
+    max_delta_q: float = 0.045
+    use_orientation: bool = True
+    orientation_weight: float = 0.08
+    nullspace_gain: float = 0.10
+    joint_centering_gain: float = 0.06
+    home_q: tuple[float, ...] = (0.0, 0.3, 0.0, -1.57079, 0.0, 2.0, -0.7853)
     gripper_open_value: float = 0.04
     gripper_close_value: float = 0.0
+    grasp_contact_steps: int = 3
+    max_grasp_rel_speed: float = 0.30
+    grasp_distance_threshold: float = 0.09
+    stale_weld_distance: float = 0.22
 
 
 class EEController:
@@ -64,6 +71,9 @@ class EEController:
             if pad_id is not None:
                 self.grasp_geom_ids.add(pad_id)
         self.grasp_attached = False
+        self.contact_persistence_steps = 0
+        if len(self.config.home_q) != len(self.arm_joint_ids):
+            raise ValueError("EEControllerConfig.home_q must contain 7 values for Panda arm joints.")
 
     def _name_to_id(self, obj_type: mujoco.mjtObj, name: str) -> int:
         obj_id = mujoco.mj_name2id(self.model, obj_type, name)
@@ -91,6 +101,19 @@ class EEController:
     def current_ee_pos(self) -> np.ndarray:
         return np.array(self.data.site_xpos[self.ee_site_id], dtype=float)
 
+    def current_ee_quat(self) -> np.ndarray:
+        xmat = np.array(self.data.site_xmat[self.ee_site_id], dtype=float).reshape(9)
+        quat = np.zeros(4, dtype=float)
+        mujoco.mju_mat2Quat(quat, xmat)
+        return quat
+
+    def joint_limit_min_margin(self) -> float:
+        q_current = np.array([self.data.qpos[idx] for idx in self.arm_qpos_ids], dtype=float)
+        q_min = np.array([self.model.jnt_range[jid, 0] for jid in self.arm_joint_ids], dtype=float)
+        q_max = np.array([self.model.jnt_range[jid, 1] for jid in self.arm_joint_ids], dtype=float)
+        margin = np.minimum(q_current - q_min, q_max - q_current)
+        return float(np.min(margin))
+
     def compute_qpos_des(
         self,
         ee_target_pos: np.ndarray,
@@ -104,6 +127,7 @@ class EEController:
         mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
         jac_arm = jacp[:, self.arm_dof_ids]
         err_vec = pos_error
+        q_current = np.array([self.data.qpos[idx] for idx in self.arm_qpos_ids], dtype=float)
 
         if self.config.use_orientation and ee_target_quat is not None:
             rot_error = self._orientation_error(np.asarray(ee_target_quat, dtype=float).reshape(4))
@@ -112,10 +136,25 @@ class EEController:
 
         damping_sq = self.config.damping * self.config.damping
         gram = jac_arm @ jac_arm.T + damping_sq * np.eye(jac_arm.shape[0], dtype=float)
-        dq = jac_arm.T @ np.linalg.solve(gram, err_vec)
+        gram_inv_err = np.linalg.solve(gram, err_vec)
+        dq_task = jac_arm.T @ gram_inv_err
+
+        gram_inv = np.linalg.solve(gram, np.eye(gram.shape[0], dtype=float))
+        jac_pinv = jac_arm.T @ gram_inv
+        nullspace = np.eye(len(self.arm_joint_ids), dtype=float) - jac_pinv @ jac_arm
+
+        q_home = np.asarray(self.config.home_q, dtype=float)
+        q_min = np.array([self.model.jnt_range[jid, 0] for jid in self.arm_joint_ids], dtype=float)
+        q_max = np.array([self.model.jnt_range[jid, 1] for jid in self.arm_joint_ids], dtype=float)
+        q_mid = 0.5 * (q_min + q_max)
+        q_half = 0.5 * (q_max - q_min)
+        q_center_term = (q_mid - q_current) / (q_half + 1e-6)
+
+        dq_null = self.config.nullspace_gain * (q_home - q_current)
+        dq_null += self.config.joint_centering_gain * q_center_term
+        dq = dq_task + nullspace @ dq_null
 
         dq = np.clip(dq, -self.config.max_delta_q, self.config.max_delta_q)
-        q_current = np.array([self.data.qpos[idx] for idx in self.arm_qpos_ids], dtype=float)
         q_des = q_current + self.config.ik_step_size * dq
 
         for i, joint_id in enumerate(self.arm_joint_ids):
@@ -137,7 +176,8 @@ class EEController:
             q_err *= -1.0
         return 2.0 * q_err[1:]
 
-    def target_in_hand_contact(self) -> bool:
+    def _count_target_grasp_contacts(self) -> int:
+        count = 0
         for idx in range(int(self.data.ncon)):
             contact = self.data.contact[idx]
             geom_1 = int(contact.geom1)
@@ -146,8 +186,21 @@ class EEController:
                 continue
             other = geom_2 if geom_1 == self.target_geom_id else geom_1
             if other in self.grasp_geom_ids:
-                return True
-        return False
+                count += 1
+        return count
+
+    def target_in_hand_contact(self) -> bool:
+        return self._count_target_grasp_contacts() > 0
+
+    def _body_linear_vel(self, body_id: int) -> np.ndarray:
+        if hasattr(self.data, "cvel"):
+            return np.array(self.data.cvel[body_id, 3:6], dtype=float)
+        return np.zeros(3, dtype=float)
+
+    def _target_relative_speed(self) -> float:
+        hand_vel = self._body_linear_vel(self.hand_body_id)
+        target_vel = self._body_linear_vel(self.target_body_id)
+        return float(np.linalg.norm(hand_vel - target_vel))
 
     def _set_weld_relative_pose(self) -> None:
         hand_pos = np.array(self.data.xpos[self.hand_body_id], dtype=float)
@@ -192,19 +245,27 @@ class EEController:
             self.config.gripper_close_value if gripper_closed else self.config.gripper_open_value
         )
 
-        target_contact = self.target_in_hand_contact()
+        contact_count = self._count_target_grasp_contacts()
+        target_contact = contact_count > 0
+        self.contact_persistence_steps = self.contact_persistence_steps + 1 if target_contact else 0
         ee_to_target = float(np.linalg.norm(self.current_ee_pos() - np.array(self.data.xpos[self.target_body_id])))
-        within_grasp_distance = ee_to_target < 0.10
+        rel_speed = self._target_relative_speed()
+        within_grasp_distance = ee_to_target < self.config.grasp_distance_threshold
+        stable_for_grasp = self.contact_persistence_steps >= self.config.grasp_contact_steps
+        low_rel_speed = rel_speed <= self.config.max_grasp_rel_speed
 
-        if gripper_closed and target_contact and within_grasp_distance and not self.grasp_attached:
+        if gripper_closed and target_contact and stable_for_grasp and within_grasp_distance and low_rel_speed and not self.grasp_attached:
             self._set_grasp_weld(True)
         elif (not gripper_closed) and self.grasp_attached:
             self._set_grasp_weld(False)
-        elif self.grasp_attached and ee_to_target > 0.30:
+        elif self.grasp_attached and ee_to_target > self.config.stale_weld_distance:
             # Failsafe: do not keep a stale weld active if simulation diverges.
             self._set_grasp_weld(False)
 
         return {
             "target_contact": target_contact,
             "grasp_attached": self.grasp_attached,
+            "contact_count": contact_count,
+            "contact_persistence_steps": self.contact_persistence_steps,
+            "target_rel_speed_ok": low_rel_speed,
         }
