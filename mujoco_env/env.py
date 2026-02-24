@@ -229,7 +229,9 @@ class PandaPickPlaceEnv:
         goal_pos = np.asarray(obs["goal_pos"], dtype=float)
         target_goal_dist = float(np.linalg.norm(target_pos[:2] - goal_pos[:2]))
         placed_height_ok = bool(target_pos[2] < 0.07)
-        released = not bool(obs["gripper_state"]["closed"])
+        released_cmd = bool(self.last_action[3] <= 0.5)
+        released_state = bool((not obs["gripper_state"]["attached"]) and (obs["gripper_state"]["width"] > 0.008))
+        released = bool(released_cmd and released_state)
         return bool(target_goal_dist < 0.06 and placed_height_ok and released)
 
     def _run_sanity_checks(self, obs: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -248,6 +250,8 @@ class PandaPickPlaceEnv:
             errors.append("Non-finite ee_pos detected.")
         if float(np.max(np.abs(qvel))) > 80.0:
             errors.append("Joint velocity exceeded 80 rad/s-equivalent limit.")
+        if ee_pos[2] < 0.0:
+            errors.append("End-effector went below floor plane (z < 0).")
         if self.controller.joint_limit_min_margin() < 0.004:
             errors.append("Arm joint reached near-limit unsafe margin (<0.004 rad).")
         if target_pos[2] < -0.01:
@@ -271,7 +275,9 @@ class PandaPickPlaceEnv:
         self.current_ee_target = self._rate_limit_ee_target(action[:3])
         gripper_closed = bool(action[3] > 0.5)
         self.model.site_pos[self.ee_target_site_id] = self.current_ee_target
-        use_orient_lock = gripper_closed or self.current_ee_target[2] < 0.16
+        # Position-only control for robustness in this baseline.
+        # Orientation lock can over-constrain IK for some seeds/pick poses.
+        use_orient_lock = False
         ee_target_quat = self.reference_ee_quat if use_orient_lock else None
 
         attachment_changed = False
@@ -367,50 +373,106 @@ def main() -> None:
     with PandaPickPlaceEnv(config) as env:
         obs = env.reset(seed=args.seed)
         start_ee = np.array(obs["ee_pos"], dtype=float)
+        phase = "approach"
+        retry_count = 0
+        close_hold_steps = 0
+        open_hold_steps = 0
+        max_pick_retries = 3
+
+        def transition(next_phase: str, step_idx: int) -> None:
+            nonlocal phase, close_hold_steps, open_hold_steps
+            if next_phase == phase:
+                return
+            phase = next_phase
+            close_hold_steps = 0
+            open_hold_steps = 0
+            env.logger.log_event("phase_transition", {"phase": phase}, step=step_idx)
+
         for t in range(args.steps):
-            progress = (t + 1) / max(args.steps, 1)
             target = np.array(obs["target_pos"], dtype=float)
             goal = np.array(obs["goal_pos"], dtype=float)
+            ee = np.array(obs["ee_pos"], dtype=float)
+            attached = bool(obs["gripper_state"]["attached"])
+            target_on_floor = bool(target[2] < 0.045)
 
-            pre_grasp = np.array([target[0], target[1], max(target[2] + 0.13, 0.13)], dtype=float)
-            grasp = np.array([target[0], target[1], max(target[2] + 0.038, 0.060)], dtype=float)
-            lift = np.array([target[0], target[1], 0.23], dtype=float)
+            pre_grasp = np.array([target[0], target[1], max(target[2] + 0.22, 0.22)], dtype=float)
+            grasp = np.array([target[0], target[1], max(target[2] + 0.075, 0.085)], dtype=float)
+            lift = np.array([start_ee[0], start_ee[1], 0.30], dtype=float)
             pre_place = np.array([goal[0], goal[1], 0.23], dtype=float)
-            place = np.array([goal[0], goal[1], 0.085], dtype=float)
+            place = np.array([goal[0], goal[1], 0.10], dtype=float)
 
-            if progress < 0.20:
-                alpha = progress / 0.20
-                ee_cmd = (1.0 - alpha) * start_ee + alpha * pre_grasp
+            xy_err_target = float(np.linalg.norm(ee[:2] - target[:2]))
+            dist_to_pre_grasp = float(np.linalg.norm(ee - pre_grasp))
+            dist_to_grasp = float(np.linalg.norm(ee - grasp))
+            target_goal_xy = float(np.linalg.norm(target[:2] - goal[:2]))
+
+            if phase == "approach":
+                ee_cmd = pre_grasp
                 gripper = 0.0
-            elif progress < 0.48:
-                alpha = (progress - 0.20) / 0.28
-                ee_cmd = (1.0 - alpha) * pre_grasp + alpha * grasp
+                if dist_to_pre_grasp < 0.06:
+                    transition("descend", t + 1)
+            elif phase == "descend":
+                ee_cmd = grasp
                 gripper = 0.0
-            elif progress < 0.60:
+                if dist_to_grasp < 0.045 or obs["contacts_summary"]["target_hand_contact"]:
+                    transition("close", t + 1)
+            elif phase == "close":
                 ee_cmd = grasp
                 gripper = 1.0
-            elif progress < 0.74:
-                alpha = (progress - 0.60) / 0.14
-                ee_cmd = (1.0 - alpha) * grasp + alpha * lift
+                close_hold_steps += 1
+                if attached:
+                    transition("lift", t + 1)
+                elif close_hold_steps > 28:
+                    retry_count += 1
+                    if retry_count > max_pick_retries:
+                        transition("abort", t + 1)
+                    else:
+                        transition("approach", t + 1)
+            elif phase == "lift":
+                ee_cmd = lift
                 gripper = 1.0
-            elif progress < 0.88:
-                alpha = (progress - 0.74) / 0.14
-                ee_cmd = (1.0 - alpha) * lift + alpha * pre_place
+                if not attached and target_on_floor:
+                    transition("approach", t + 1)
+                elif target[2] > 0.06:
+                    transition("move_to_goal", t + 1)
+            elif phase == "move_to_goal":
+                ee_cmd = pre_place
                 gripper = 1.0
-            elif progress < 0.96:
-                alpha = (progress - 0.88) / 0.08
-                ee_cmd = (1.0 - alpha) * pre_place + alpha * place
-                gripper = 1.0
-            else:
+                if not attached and target_on_floor:
+                    transition("approach", t + 1)
+                elif target_goal_xy < 0.08:
+                    transition("lower_to_place", t + 1)
+            elif phase == "lower_to_place":
                 ee_cmd = place
+                gripper = 1.0
+                if ee[2] < 0.12:
+                    transition("open", t + 1)
+            elif phase == "open":
+                ee_cmd = place
+                gripper = 0.0
+                open_hold_steps += 1
+                if open_hold_steps > 18:
+                    transition("retreat", t + 1)
+            elif phase == "retreat":
+                ee_cmd = pre_place
+                gripper = 0.0
+            else:
+                ee_cmd = np.array([start_ee[0], start_ee[1], 0.24], dtype=float)
                 gripper = 0.0
 
             action = np.array([ee_cmd[0], ee_cmd[1], ee_cmd[2], gripper], dtype=float)
             obs, reward, done, info = env.step(action)
+            if phase == "abort":
+                env.logger.log_event(
+                    "episode_abort",
+                    {"reason": "max_pick_retries_exceeded", "retry_count": retry_count},
+                    step=t + 1,
+                )
+                done = True
             if done:
                 env.logger.log_event(
                     "episode_done",
-                    {"step": t + 1, "reward": reward, "info": info},
+                    {"step": t + 1, "reward": reward, "info": info, "phase": phase, "retry_count": retry_count},
                 )
                 break
 

@@ -61,9 +61,12 @@ class EEController:
         ]
         self.gripper_ctrl_id = self._name_to_id(mujoco.mjtObj.mjOBJ_ACTUATOR, "actuator8")
         self.target_geom_id = self._name_to_id(mujoco.mjtObj.mjOBJ_GEOM, "target_cube_geom")
+        self.target_joint_id = self._name_to_id(mujoco.mjtObj.mjOBJ_JOINT, "target_cube_joint")
         self.weld_id = self._name_to_id(mujoco.mjtObj.mjOBJ_EQUALITY, "target_grasp_weld")
         self.hand_body_id = self._name_to_id(mujoco.mjtObj.mjOBJ_BODY, "hand")
         self.target_body_id = self._name_to_id(mujoco.mjtObj.mjOBJ_BODY, "target_cube")
+        self.left_finger_pad_geom_id = self._try_name_to_id(mujoco.mjtObj.mjOBJ_GEOM, "left_finger_pad")
+        self.right_finger_pad_geom_id = self._try_name_to_id(mujoco.mjtObj.mjOBJ_GEOM, "right_finger_pad")
         self.hand_geom_ids = self._collect_hand_geom_ids(("hand", "left_finger", "right_finger"))
         self.grasp_geom_ids = self._collect_hand_geom_ids(("left_finger", "right_finger"))
         for pad_name in ("left_finger_pad", "right_finger_pad"):
@@ -202,11 +205,50 @@ class EEController:
         target_vel = self._body_linear_vel(self.target_body_id)
         return float(np.linalg.norm(hand_vel - target_vel))
 
-    def _set_weld_relative_pose(self) -> None:
+    def _compute_pinch_center_rel_pos(self) -> np.ndarray | None:
+        if self.left_finger_pad_geom_id is None or self.right_finger_pad_geom_id is None:
+            return None
+        left_world = np.array(self.data.geom_xpos[self.left_finger_pad_geom_id], dtype=float)
+        right_world = np.array(self.data.geom_xpos[self.right_finger_pad_geom_id], dtype=float)
+        pinch_world = 0.5 * (left_world + right_world)
+        hand_pos = np.array(self.data.xpos[self.hand_body_id], dtype=float)
+        hand_rot = np.array(self.data.xmat[self.hand_body_id], dtype=float).reshape(3, 3)
+        pinch_rel = hand_rot.T @ (pinch_world - hand_pos)
+        if not np.isfinite(pinch_rel).all():
+            return None
+        return pinch_rel
+
+    def _compute_pinch_center_world_pos(self) -> np.ndarray | None:
+        if self.left_finger_pad_geom_id is None or self.right_finger_pad_geom_id is None:
+            return None
+        left_world = np.array(self.data.geom_xpos[self.left_finger_pad_geom_id], dtype=float)
+        right_world = np.array(self.data.geom_xpos[self.right_finger_pad_geom_id], dtype=float)
+        pinch_world = 0.5 * (left_world + right_world)
+        if not np.isfinite(pinch_world).all():
+            return None
+        return pinch_world
+
+    def _snap_target_to_pinch_center(self) -> None:
+        pinch_world = self._compute_pinch_center_world_pos()
+        if pinch_world is None:
+            return
+        qpos_adr = int(self.model.jnt_qposadr[self.target_joint_id])
+        qvel_adr = int(self.model.jnt_dofadr[self.target_joint_id])
+        self.data.qpos[qpos_adr : qpos_adr + 3] = pinch_world
+        # Keep the cube above floor while snapping into the grasp.
+        self.data.qpos[qpos_adr + 2] = max(self.data.qpos[qpos_adr + 2], 0.021)
+        self.data.qvel[qvel_adr : qvel_adr + 6] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+
+    def _set_weld_relative_pose(self, *, snap_to_pinch_center: bool = False) -> None:
         hand_pos = np.array(self.data.xpos[self.hand_body_id], dtype=float)
         target_pos = np.array(self.data.xpos[self.target_body_id], dtype=float)
         hand_rot = np.array(self.data.xmat[self.hand_body_id], dtype=float).reshape(3, 3)
         rel_pos = hand_rot.T @ (target_pos - hand_pos)
+        if snap_to_pinch_center:
+            pinch_rel = self._compute_pinch_center_rel_pos()
+            if pinch_rel is not None:
+                rel_pos = pinch_rel
 
         hand_quat = np.array(self.data.xquat[self.hand_body_id], dtype=float)
         target_quat = np.array(self.data.xquat[self.target_body_id], dtype=float)
@@ -226,8 +268,10 @@ class EEController:
         if not hasattr(self.data, "eq_active"):
             return
         if active:
-            # Prevent impulsive jumps by welding with the current relative hand-target transform.
-            self._set_weld_relative_pose()
+            # Align target to pinch center before welding to avoid side-capture visuals.
+            self._snap_target_to_pinch_center()
+            # Snap weld to pinch center so object stays visually between fingers while grasped.
+            self._set_weld_relative_pose(snap_to_pinch_center=True)
         self.data.eq_active[self.weld_id] = 1 if active else 0
         mujoco.mj_forward(self.model, self.data)
         self.grasp_attached = active
