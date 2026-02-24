@@ -1,0 +1,48 @@
+<mujoco model="panda_pick_place_two_cubes">
+  <include file="assets/franka_emika_panda/mjx_scene.xml"/>
+
+  <option timestep="0.005"/>
+
+  <visual>
+    <scale framelength="0.12" framewidth="0.006"/>
+  </visual>
+
+  <worldbody>
+    <site name="goal_region" type="cylinder" pos="0.58 0.0 0.001" size="0.055 0.003" rgba="0.1 0.9 0.2 0.40"/>
+    <site name="ee_target_site" type="sphere" pos="0.52 0.0 0.30" size="0.012" rgba="1.0 0.2 0.2 0.8"/>
+    <site name="waypoint_site" type="sphere" pos="0.52 0.0 0.24" size="0.009" rgba="0.2 0.7 1.0 0.8"/>
+
+    <body name="target_cube" pos="0.56 0.09 0.03">
+      <freejoint name="target_cube_joint"/>
+      <geom name="target_cube_geom"
+            type="box"
+            size="0.02 0.02 0.02"
+            mass="0.04"
+            condim="3"
+            friction="1 0.02 0.001"
+            rgba="0.95 0.2 0.2 1"/>
+      <site name="target_cube_site" type="sphere" pos="0 0 0" size="0.010" rgba="1 0.3 0.3 0.7"/>
+    </body>
+
+    <body name="distractor_cube" pos="0.46 -0.12 0.03">
+      <freejoint name="distractor_cube_joint"/>
+      <geom name="distractor_cube_geom"
+            type="box"
+            size="0.02 0.02 0.02"
+            mass="0.04"
+            condim="3"
+            friction="1 0.02 0.001"
+            rgba="0.2 0.25 0.95 1"/>
+      <site name="distractor_cube_site" type="sphere" pos="0 0 0" size="0.010" rgba="0.3 0.3 1 0.7"/>
+    </body>
+  </worldbody>
+
+  <equality>
+    <!-- Runtime grasp helper: enabled/disabled from Python at close/open gripper events -->
+    <weld name="target_grasp_weld" body1="hand" body2="target_cube" active="false" solref="0.02 1"/>
+  </equality>
+
+  <contact>
+    <exclude body1="target_cube" body2="distractor_cube"/>
+  </contact>
+</mujoco>
