@@ -1,5 +1,28 @@
-feedback_assets/
-artifacts/
-.pytest_cache/
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Testing
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Artifacts / logs (regenerated at runtime)
+artifacts/
+feedback_assets/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Diagnostic outputs
+tests/*.txt
