@@ -22,9 +22,9 @@ ARM_JOINT_NAMES: tuple[str, ...] = (
 
 @dataclass
 class EEControllerConfig:
-    damping: float = 3e-2
-    ik_step_size: float = 0.22
-    max_delta_q: float = 0.045
+    damping: float = 1.5e-2
+    ik_step_size: float = 0.5
+    max_delta_q: float = 0.12
     use_orientation: bool = True
     orientation_weight: float = 0.08
     nullspace_gain: float = 0.10
@@ -32,10 +32,11 @@ class EEControllerConfig:
     home_q: tuple[float, ...] = (0.0, 0.3, 0.0, -1.57079, 0.0, 2.0, -0.7853)
     gripper_open_value: float = 0.04
     gripper_close_value: float = 0.0
-    grasp_contact_steps: int = 3
+    grasp_contact_steps: int = 2
     max_grasp_rel_speed: float = 0.30
-    grasp_distance_threshold: float = 0.09
-    stale_weld_distance: float = 0.22
+    grasp_distance_threshold: float = 0.12
+    stale_weld_distance: float = 0.35
+    grasp_snap_z_offset: float = 0.01
 
 
 class EEController:
@@ -224,6 +225,8 @@ class EEController:
         left_world = np.array(self.data.geom_xpos[self.left_finger_pad_geom_id], dtype=float)
         right_world = np.array(self.data.geom_xpos[self.right_finger_pad_geom_id], dtype=float)
         pinch_world = 0.5 * (left_world + right_world)
+        hand_rot = np.array(self.data.xmat[self.hand_body_id], dtype=float).reshape(3, 3)
+        pinch_world = pinch_world + hand_rot @ np.array([0.0, 0.0, self.config.grasp_snap_z_offset], dtype=float)
         if not np.isfinite(pinch_world).all():
             return None
         return pinch_world

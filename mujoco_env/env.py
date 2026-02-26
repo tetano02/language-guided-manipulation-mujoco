@@ -25,13 +25,13 @@ class EnvConfig:
     seed: int = 0
     render: bool = False
     frame_skip: int = 8
-    max_steps: int = 350
+    max_steps: int = 500
     output_dir: Path = Path("artifacts")
     log_jsonl: bool = True
     sanity_asserts: bool = True
-    ee_target_max_delta: float = 0.035
+    ee_target_max_delta: float = 0.06
     workspace_low: np.ndarray = field(
-        default_factory=lambda: np.array([0.42, -0.24, 0.05], dtype=float)
+        default_factory=lambda: np.array([0.42, -0.24, 0.02], dtype=float)
     )
     workspace_high: np.ndarray = field(
         default_factory=lambda: np.array([0.70, 0.24, 0.60], dtype=float)
@@ -378,14 +378,21 @@ def main() -> None:
         close_hold_steps = 0
         open_hold_steps = 0
         max_pick_retries = 3
+        floor_clear_steps = 0
+        floor_clear_required = 6
+        ee_lift_clearance_z = 0.06
+        target_lift_clearance_z = 0.04
+        lift_height_z = 0.28
+        lift_anchor_xy = np.array(start_ee[:2], dtype=float)
 
         def transition(next_phase: str, step_idx: int) -> None:
-            nonlocal phase, close_hold_steps, open_hold_steps
+            nonlocal phase, close_hold_steps, open_hold_steps, floor_clear_steps
             if next_phase == phase:
                 return
             phase = next_phase
             close_hold_steps = 0
             open_hold_steps = 0
+            floor_clear_steps = 0
             env.logger.log_event("phase_transition", {"phase": phase}, step=step_idx)
 
         for t in range(args.steps):
@@ -394,12 +401,13 @@ def main() -> None:
             ee = np.array(obs["ee_pos"], dtype=float)
             attached = bool(obs["gripper_state"]["attached"])
             target_on_floor = bool(target[2] < 0.045)
+            target_floor_contact = bool(obs["contacts_summary"]["target_floor_contact"])
 
-            pre_grasp = np.array([target[0], target[1], max(target[2] + 0.22, 0.22)], dtype=float)
-            grasp = np.array([target[0], target[1], max(target[2] + 0.075, 0.085)], dtype=float)
-            lift = np.array([start_ee[0], start_ee[1], 0.30], dtype=float)
-            pre_place = np.array([goal[0], goal[1], 0.23], dtype=float)
-            place = np.array([goal[0], goal[1], 0.10], dtype=float)
+            pre_grasp = np.array([target[0], target[1], max(target[2] + 0.16, 0.18)], dtype=float)
+            grasp = np.array([target[0], target[1], max(target[2] + 0.035, 0.055)], dtype=float)
+            lift = np.array([lift_anchor_xy[0], lift_anchor_xy[1], lift_height_z], dtype=float)
+            pre_place = np.array([goal[0], goal[1], lift_height_z], dtype=float)
+            place = np.array([goal[0], goal[1], 0.08], dtype=float)
 
             xy_err_target = float(np.linalg.norm(ee[:2] - target[:2]))
             dist_to_pre_grasp = float(np.linalg.norm(ee - pre_grasp))
@@ -409,37 +417,46 @@ def main() -> None:
             if phase == "approach":
                 ee_cmd = pre_grasp
                 gripper = 0.0
-                if dist_to_pre_grasp < 0.06:
+                if dist_to_pre_grasp < 0.045:
                     transition("descend", t + 1)
             elif phase == "descend":
                 ee_cmd = grasp
                 gripper = 0.0
-                if dist_to_grasp < 0.045 or obs["contacts_summary"]["target_hand_contact"]:
+                if dist_to_grasp < 0.035 or obs["contacts_summary"]["target_hand_contact"]:
                     transition("close", t + 1)
             elif phase == "close":
                 ee_cmd = grasp
                 gripper = 1.0
                 close_hold_steps += 1
                 if attached:
-                    transition("lift", t + 1)
-                elif close_hold_steps > 28:
+                    lift_anchor_xy = np.array(start_ee[:2], dtype=float)
+                    transition("lift_vertical", t + 1)
+                elif close_hold_steps > 20:
                     retry_count += 1
                     if retry_count > max_pick_retries:
                         transition("abort", t + 1)
                     else:
                         transition("approach", t + 1)
-            elif phase == "lift":
+            elif phase == "lift_vertical":
                 ee_cmd = lift
                 gripper = 1.0
                 if not attached and target_on_floor:
                     transition("approach", t + 1)
-                elif target[2] > 0.06:
-                    transition("move_to_goal", t + 1)
-            elif phase == "move_to_goal":
+                else:
+                    floor_clear_steps = floor_clear_steps + 1 if not target_floor_contact else 0
+                    if (
+                        ee[2] >= ee_lift_clearance_z
+                        and target[2] >= target_lift_clearance_z
+                        and floor_clear_steps >= floor_clear_required
+                    ):
+                        transition("move_to_goal_high", t + 1)
+            elif phase == "move_to_goal_high":
                 ee_cmd = pre_place
                 gripper = 1.0
                 if not attached and target_on_floor:
                     transition("approach", t + 1)
+                elif target_floor_contact:
+                    transition("lift_vertical", t + 1)
                 elif target_goal_xy < 0.08:
                     transition("lower_to_place", t + 1)
             elif phase == "lower_to_place":

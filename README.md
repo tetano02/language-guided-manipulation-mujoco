@@ -4,7 +4,7 @@ Repository for "Language-Guided Task Abstraction for Robotic Manipulation in MuJ
 
 Current status:
 - Part 1 complete: environment core, EE-first controller, debug/logging hooks, rule-based segmentation, LLM task-graph generation with JSON validation + retry + offline fallback, and initial reproducible tests.
-- Part 2/3 pending: scripted demo collection, execution engine from task graph, full evaluation pipeline.
+- Part 2 in progress: scripted demo collection is now available; execution engine from task graph and full evaluation pipeline are still pending.
 
 ## Requirements
 
@@ -30,6 +30,18 @@ Render (interactive inspection):
 
 ```bash
 uv run mujoco-env-smoke --render --steps 200 --seed 0 --output-dir artifacts/render
+```
+
+## Collect scripted demos
+
+```bash
+uv run collect-demos --headless --episodes 5 --steps 220 --seed 0 --output-dir artifacts/demos --dataset-path demos/dataset.pkl
+```
+
+Optional video output:
+
+```bash
+uv run collect-demos --render --episodes 1 --steps 220 --seed 0 --save-mp4 --output-dir artifacts/demos --dataset-path demos/dataset.pkl
 ```
 
 ## Controller details

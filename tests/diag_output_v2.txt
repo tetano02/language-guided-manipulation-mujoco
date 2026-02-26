@@ -1,0 +1,22 @@
+﻿Seed   0: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.212 | tgt_z=0.035 | reached_goal=False
+Seed   1: FAIL | phase=approach             | grasp=False | retries=0 | steps=400 | tgt-goal=0.418 | tgt_z=0.020 | reached_goal=False
+Seed   2: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.143 | tgt_z=0.057 | reached_goal=False
+Seed   3: FAIL | phase=move_to_goal_high    | grasp=True | retries=0 | steps=400 | tgt-goal=0.148 | tgt_z=0.073 | reached_goal=True
+Seed   4: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.130 | tgt_z=0.031 | reached_goal=False
+Seed   5: FAIL | phase=move_to_goal_high    | grasp=True | retries=0 | steps=400 | tgt-goal=0.108 | tgt_z=0.222 | reached_goal=True
+Seed   6: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.183 | tgt_z=0.040 | reached_goal=False
+Seed   7: FAIL | phase=approach             | grasp=False | retries=0 | steps=400 | tgt-goal=0.251 | tgt_z=0.020 | reached_goal=False
+Seed   8: FAIL | phase=approach             | grasp=False | retries=0 | steps=400 | tgt-goal=0.295 | tgt_z=0.020 | reached_goal=False
+Seed   9: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.037 | tgt_z=0.032 | reached_goal=False
+Seed  10: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.072 | tgt_z=0.052 | reached_goal=False
+Seed  11: FAIL | phase=move_to_goal_high    | grasp=True | retries=0 | steps=400 | tgt-goal=0.118 | tgt_z=0.193 | reached_goal=True
+Seed  12: FAIL | phase=approach             | grasp=False | retries=0 | steps=400 | tgt-goal=0.226 | tgt_z=0.024 | reached_goal=False
+Seed  13: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.162 | tgt_z=0.049 | reached_goal=False
+Seed  14: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.168 | tgt_z=0.050 | reached_goal=False
+Seed  15: FAIL | phase=move_to_goal_high    | grasp=True | retries=0 | steps=400 | tgt-goal=0.169 | tgt_z=0.105 | reached_goal=True
+Seed  16: FAIL | phase=move_to_goal_high    | grasp=True | retries=0 | steps=400 | tgt-goal=0.177 | tgt_z=0.090 | reached_goal=True
+Seed  17: FAIL | phase=lift_vertical        | grasp=True | retries=0 | steps=400 | tgt-goal=0.233 | tgt_z=0.053 | reached_goal=False
+Seed  18: FAIL | phase=move_to_goal_high    | grasp=True | retries=0 | steps=400 | tgt-goal=0.166 | tgt_z=0.068 | reached_goal=True
+Seed  19: FAIL | phase=approach             | grasp=False | retries=0 | steps=400 | tgt-goal=0.283 | tgt_z=0.017 | reached_goal=False
+
+=== SUMMARY: 0/20 success, 15/20 grasped, 6/20 reached goal phase ===

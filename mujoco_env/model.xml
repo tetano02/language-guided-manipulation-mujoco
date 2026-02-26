@@ -39,7 +39,7 @@
 
   <equality>
     <!-- Runtime grasp helper: enabled/disabled from Python at close/open gripper events -->
-    <weld name="target_grasp_weld" body1="hand" body2="target_cube" active="false" solref="0.02 1"/>
+    <weld name="target_grasp_weld" body1="hand" body2="target_cube" active="false" solref="0.01 1" solimp="0.99 0.999 0.001"/>
   </equality>
 
   <contact>
