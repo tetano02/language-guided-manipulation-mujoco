@@ -331,7 +331,7 @@ def main() -> None:
             }
 
             if args.save_mp4:
-                video_path = logger.run_dir / f"episode_{episode_idx:03d}.mp4"
+                video_path = logger.run_dir / f"episode_{episode_idx:03d}_seed{episode_seed}_steps{len(episode_states)}.mp4"
                 summary["video_path"] = str(video_path)
                 summary["video_saved"] = bool(_save_episode_video(frames, output_path=video_path, fps=args.video_fps))
 
