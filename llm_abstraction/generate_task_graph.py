@@ -193,29 +193,46 @@ def generate_task_graph(
     max_retries: int = 3,
     allow_stub_fallback: bool = True,
 ) -> dict[str, Any]:
+    import time
+
     if not primitives:
         primitives = ["stabilize"]
     if not api_key:
+        print("[task_graph] No API key found, using deterministic fallback.")
         if allow_stub_fallback:
             return _build_stub_graph(primitives, reason="missing_api_key")
         raise ValueError("Gemini API key missing and stub fallback disabled.")
 
+    print(f"[task_graph] Calling Gemini ({model_name}) with {len(primitives)} primitives...")
     prompt = build_task_graph_prompt(primitives)
     errors: list[str] = []
-    for _ in range(max_retries):
+    for attempt in range(max_retries):
         try:
+            print(f"[task_graph]   Attempt {attempt + 1}/{max_retries}...")
             raw = _call_gemini(prompt, api_key=api_key, model_name=model_name)
+            print(f"[task_graph]   Got response ({len(raw)} chars), parsing...")
             parsed = _extract_json(raw)
             ok, validation_errors, normalized = validate_task_graph_json(parsed)
             if ok and normalized is not None:
                 normalized.setdefault("metadata", {})
                 normalized["metadata"]["generator"] = "gemini"
                 normalized["metadata"]["model_name"] = model_name
+                normalized["metadata"]["input_primitives"] = primitives
+                print(f"[task_graph]   ✅ Valid task graph with {len(normalized['nodes'])} nodes.")
                 return normalized
             errors.extend(validation_errors)
+            print(f"[task_graph]   ❌ Validation failed: {validation_errors}")
         except Exception as exc:
-            errors.append(str(exc))
+            err_str = str(exc)
+            errors.append(err_str)
+            print(f"[task_graph]   ❌ Error: {err_str[:200]}")
+            # Exponential backoff for rate limits
+            if "429" in err_str or "quota" in err_str.lower() or "resource" in err_str.lower():
+                wait = 15 * (attempt + 1)
+                print(f"[task_graph]   Rate limited, waiting {wait}s...")
+                time.sleep(wait)
 
+    print(f"[task_graph] All {max_retries} attempts failed, using deterministic fallback.")
     if allow_stub_fallback:
         return _build_stub_graph(primitives, reason=f"llm_failed:{'; '.join(errors[:3])}")
     raise ValueError(f"Failed to generate valid task graph after retries: {errors}")
