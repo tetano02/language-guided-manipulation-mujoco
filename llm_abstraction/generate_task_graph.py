@@ -104,34 +104,70 @@ def _primitive_to_node_type(primitive: str) -> str:
 
 
 def _build_stub_graph(primitives: Iterable[str], *, reason: str) -> dict[str, Any]:
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, str]] = []
-    previous_node_id: str | None = None
-    for idx, primitive in enumerate(primitives):
-        node_id = f"n{idx}"
-        node_type = _primitive_to_node_type(primitive)
-        params: dict[str, Any] = {}
-        if node_type in {"approach_target", "lower_to_grasp", "close_gripper", "lift_target"}:
-            params["target_ref"] = "env.target_pos"
-        if node_type in {"move_to_goal", "open_gripper"}:
-            params["target_ref"] = "env.target_pos"
-            params["goal_ref"] = "env.goal_pos"
-        nodes.append({"id": node_id, "type": node_type, "params": params})
-        if previous_node_id is not None:
-            edges.append({"from": previous_node_id, "to": node_id})
-        previous_node_id = node_id
+    """Build a deterministic task graph from primitives.
 
-    if not nodes:
-        nodes = [{"id": "n0", "type": "stabilize", "params": {}}]
-    graph = {
-        "nodes": nodes,
-        "edges": edges,
-        "metadata": {
-            "generator": "deterministic_stub",
-            "reason": reason,
-            "allowed_node_types": list(ALLOWED_NODE_TYPES),
-        },
-    }
+    If the primitives contain a pick-and-place pattern (approach + close_gripper),
+    emit the canonical 6-node sequence regardless of segmentation noise.
+    Otherwise, translate primitives 1:1.
+    """
+    prim_list = list(primitives)
+    prim_set = set(prim_list)
+
+    # Detect pick-and-place pattern: if approach and close_gripper are present,
+    # emit the canonical sequence instead of translating noisy primitives 1:1.
+    is_pick_place = ("approach" in prim_set or "lower" in prim_set) and "close_gripper" in prim_set
+    if is_pick_place:
+        canonical = [
+            ("approach_target", {"target_ref": "env.target_pos"}),
+            ("lower_to_grasp", {"target_ref": "env.target_pos"}),
+            ("close_gripper", {"target_ref": "env.target_pos"}),
+            ("lift_target", {"target_ref": "env.target_pos"}),
+            ("move_to_goal", {"target_ref": "env.target_pos", "goal_ref": "env.goal_pos"}),
+            ("open_gripper", {"goal_ref": "env.goal_pos"}),
+        ]
+        nodes = [{"id": f"n{i}", "type": t, "params": p} for i, (t, p) in enumerate(canonical)]
+        edges = [{"from": f"n{i}", "to": f"n{i+1}"} for i in range(len(canonical) - 1)]
+        graph = {
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "generator": "deterministic_stub",
+                "reason": reason,
+                "canonical_pick_place": True,
+                "input_primitives": prim_list,
+                "allowed_node_types": list(ALLOWED_NODE_TYPES),
+            },
+        }
+    else:
+        # Fallback: translate 1:1 for non-pick-place sequences
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, str]] = []
+        previous_node_id: str | None = None
+        for idx, primitive in enumerate(prim_list):
+            node_id = f"n{idx}"
+            node_type = _primitive_to_node_type(primitive)
+            params: dict[str, Any] = {}
+            if node_type in {"approach_target", "lower_to_grasp", "close_gripper", "lift_target"}:
+                params["target_ref"] = "env.target_pos"
+            if node_type in {"move_to_goal", "open_gripper"}:
+                params["target_ref"] = "env.target_pos"
+                params["goal_ref"] = "env.goal_pos"
+            nodes.append({"id": node_id, "type": node_type, "params": params})
+            if previous_node_id is not None:
+                edges.append({"from": previous_node_id, "to": node_id})
+            previous_node_id = node_id
+        if not nodes:
+            nodes = [{"id": "n0", "type": "stabilize", "params": {}}]
+        graph = {
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "generator": "deterministic_stub",
+                "reason": reason,
+                "allowed_node_types": list(ALLOWED_NODE_TYPES),
+            },
+        }
+
     ok, errors, normalized = validate_task_graph_json(graph)
     if not ok or normalized is None:
         raise ValueError(f"Internal stub validation failed: {errors}")

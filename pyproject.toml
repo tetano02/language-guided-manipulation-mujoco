@@ -22,6 +22,8 @@ mujoco-env-smoke = "mujoco_env.env:main"
 collect-demos = "demos.collect_demos:main"
 segment-dataset = "segmentation.segment:main"
 generate-task-graph = "llm_abstraction.generate_task_graph:main"
+execute-task-graph = "execution.execute_from_graph:main"
+evaluate = "evaluation.evaluate:main"
 
 [build-system]
 requires = ["hatchling>=1.24.0"]
@@ -33,6 +35,8 @@ packages = [
     "mujoco_env",
     "segmentation",
     "llm_abstraction",
+    "execution",
+    "evaluation",
     "utils",
 ]
 

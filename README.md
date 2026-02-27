@@ -4,7 +4,8 @@ Repository for "Language-Guided Task Abstraction for Robotic Manipulation in MuJ
 
 Current status:
 - Part 1 complete: environment core, EE-first controller, debug/logging hooks, rule-based segmentation, LLM task-graph generation with JSON validation + retry + offline fallback, and initial reproducible tests.
-- Part 2 in progress: scripted demo collection is now available; execution engine from task graph and full evaluation pipeline are still pending.
+- Part 2 complete: scripted demo collection, task-graph execution engine with dynamic sub-goals.
+- Part 3 complete: evaluation pipeline (baseline replay vs task-graph abstraction).
 
 ## Requirements
 
@@ -223,6 +224,57 @@ The JSON is validated against a strict schema using **Pydantic** models:
 - The API key is read from an environment variable (default: `GEMINI_API_KEY`).
 - The value of the LLM is that Gemini can **merge, reorder, or add semantic context** to the nodes. The deterministic fallback is a straight 1:1 translation that always works but adds no intelligence.
 - The stub fallback is always available for offline testing and CI.
+
+---
+
+## Execute from Task Graph
+
+The execution engine interprets a task graph JSON and drives the environment with dynamic sub-goals.
+
+```bash
+uv run execute-task-graph --task-graph artifacts/task_graph.json --seed 0 --headless
+```
+
+With viewer:
+
+```bash
+uv run execute-task-graph --task-graph artifacts/task_graph.json --seed 0 --render
+```
+
+The engine executes each node sequentially, generating EE targets by reading `target_pos` and `goal_pos` from the live observation — no hardcoded positions. Each node has a safety timeout and the grasp node supports automatic retry.
+
+---
+
+## Evaluation Pipeline
+
+Compare **baseline** (replay recorded actions from `dataset.pkl`) vs **abstraction** (task-graph execution) on the same seeds:
+
+```bash
+uv run evaluate --task-graph artifacts/task_graph.json --dataset demos/dataset.pkl --episodes 10 --seed 0 --headless
+```
+
+Output: console comparison table + `report.json` with per-episode results and aggregate metrics (success rate, mean steps, mean target-goal distance).
+
+---
+
+## Full Pipeline (end-to-end)
+
+```bash
+# 1. Collect demos
+uv run collect-demos --headless --episodes 10 --steps 400 --seed 0 --dataset-path demos/dataset.pkl
+
+# 2. Segment demos
+uv run segment-dataset --input demos/dataset.pkl --output artifacts/segments.json
+
+# 3. Generate task graph (offline fallback)
+uv run generate-task-graph --segments-json artifacts/segments.json --output artifacts/task_graph.json
+
+# 4. Execute from graph
+uv run execute-task-graph --task-graph artifacts/task_graph.json --seed 0 --headless
+
+# 5. Evaluate baseline vs abstraction
+uv run evaluate --task-graph artifacts/task_graph.json --dataset demos/dataset.pkl --episodes 10 --seed 0 --headless
+```
 
 ## Run tests
 
