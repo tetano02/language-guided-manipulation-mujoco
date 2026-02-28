@@ -9,9 +9,13 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from llm_abstraction.prompt import build_task_graph_prompt
+
+# Load .env from project root so GEMINI_API_KEY is available via os.getenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 ALLOWED_NODE_TYPES: tuple[str, ...] = (
@@ -189,7 +193,7 @@ def generate_task_graph(
     primitives: list[str],
     *,
     api_key: str | None,
-    model_name: str = "gemini-2.0-flash",
+    model_name: str = "gemini-2.5-flash",
     max_retries: int = 3,
     allow_stub_fallback: bool = True,
 ) -> dict[str, Any]:
@@ -264,7 +268,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--segments-json", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--api-key-env", type=str, default="GEMINI_API_KEY")
-    parser.add_argument("--model-name", type=str, default="gemini-2.0-flash")
+    parser.add_argument("--model-name", type=str, default="gemini-2.5-flash")
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--no-stub-fallback", action="store_true")
     return parser

@@ -1,11 +1,32 @@
-# MujocoLLM (Step 1)
+# MujocoLLM
 
-Repository for "Language-Guided Task Abstraction for Robotic Manipulation in MuJoCo" with Franka Panda.
+Language-Guided Task Abstraction for Robotic Manipulation in MuJoCo with Franka Panda.
 
-Current status:
-- Part 1 complete: environment core, EE-first controller, debug/logging hooks, rule-based segmentation, LLM task-graph generation with JSON validation + retry + offline fallback, and initial reproducible tests.
-- Part 2 complete: scripted demo collection, task-graph execution engine with dynamic sub-goals.
-- Part 3 complete: evaluation pipeline (baseline replay vs task-graph abstraction).
+## Demo: Inverse Kinematics vs LLM-Driven Execution
+
+<table>
+<tr>
+<th> Inverse Kinematics Demo (baseline)</th>
+<th> LLM Task Graph Execution</th>
+</tr>
+<tr>
+<td><img src="media/demo_seed0_scripted.gif" width="160" alt="Inverse Kinematics demo"/></td>
+<td><img src="media/seed4_execution.gif" width="400" alt="LLM-driven task graph execution with node overlay"/></td>
+</tr>
+<tr>
+<td>Scripted IK controller executing a <b>fixed trajectory</b>: positions are hardcoded at compile time.</td>
+<td>Gemini 2.5 Flash generates a task graph from noisy segmentation: the robot <b>generalizes to unseen layouts</b>.</td>
+</tr>
+</table>
+
+### Current status
+
+- Environment core with EE-first controller (damped least-squares IK, 200 Hz control loop)
+- Rule-based segmentation: 7 primitive types extracted from raw trajectories
+- LLM task-graph generation via Gemini 2.5 Flash: JSON schema validation, 3-retry with exponential backoff, deterministic fallback
+- Execution engine: 7 node handlers with dynamic sub-goals, grasp retry (up to 3 times), safety timeouts
+- Video recording with real-time node overlay (PIL text rendering at capture time)
+- Evaluation on 10 seeds: **80% success** (abstraction) vs 70% (baseline), **100% grasp rate** vs 90%, mean placement error 0.132 vs 0.203
 
 ## Requirements
 

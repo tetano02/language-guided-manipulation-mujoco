@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.7.0",
     "google-genai>=1.0.0",
     "imageio[ffmpeg]>=2.37.2",
+    "dotenv>=0.9.9",
 ]
 
 [project.optional-dependencies]

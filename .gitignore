@@ -16,6 +16,9 @@ build/
 .vscode/
 .idea/
 
+# Secrets
+.env
+
 # Artifacts / logs (regenerated at runtime)
 artifacts/
 feedback_assets/

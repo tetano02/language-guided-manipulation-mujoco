@@ -541,34 +541,36 @@ def main() -> None:
     seeds = [args.seed] if args.multi_seed <= 0 else [args.seed + i for i in range(args.multi_seed)]
     is_multi = args.multi_seed > 0
 
-    # For multi-seed, create a single shared folder
+    # ── Build output directory: artifacts/execution/YYYY-MM-DD/<run_folder>/
+    now = datetime.now()
+    date_dir = args.output_dir / now.strftime("%Y-%m-%d")
+    date_dir.mkdir(parents=True, exist_ok=True)
+
     if is_multi:
-        uid = uuid.uuid4().hex[:8]
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        shared_dir = args.output_dir / f"demo_{uid}_{ts}"
-        shared_dir.mkdir(parents=True, exist_ok=True)
+        uid = uuid.uuid4().hex[:6]
+        run_dir = date_dir / f"demo_{now.strftime('%H%M%S')}_{uid}"
+    else:
+        run_dir = date_dir / f"run_{now.strftime('%H%M%S')}_seed{args.seed}"
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     for seed in seeds:
         render_mode = bool(args.render and not args.headless)
+        # Disable env-level logging to avoid extra env_* folders
         config = EnvConfig(
             seed=seed,
             render=render_mode,
             max_steps=args.steps,
-            output_dir=args.output_dir,
+            output_dir=run_dir,
             sanity_asserts=False,
+            log_jsonl=False,
         )
-
-        if is_multi:
-            # All seeds share the same folder
-            logger = StructuredLogger(output_dir=args.output_dir, run_name=f"demo_{uid}_{ts}", enabled=True)
-        else:
-            logger = StructuredLogger(output_dir=args.output_dir, run_name=f"execution_seed{seed}", enabled=True)
+        # Use a silent logger (we save results manually to run_dir)
+        logger = StructuredLogger(output_dir=run_dir, run_name="log", enabled=False)
 
         # Set up video capture if requested
         import mujoco as mj
-        renderer = None
         frames: list[np.ndarray] = []
-        step_counter = [0]  # mutable int for closure
+        step_counter = [0]
 
         if args.save_mp4:
             try:
@@ -589,7 +591,7 @@ def main() -> None:
 
                     # Add a few extra frames at the end to show final state
                     final_label = "✅ SUCCESS" if result["success"] else "❌ FAIL"
-                    for _ in range(args.video_fps):  # 1 second of final frame
+                    for _ in range(args.video_fps):
                         renderer.update_scene(env.data)
                         raw = renderer.render().copy()
                         annotated = _add_text_overlay(raw, final_label, step_counter[0])
@@ -600,27 +602,21 @@ def main() -> None:
                 if frames:
                     status_tag = "ok" if result["success"] else "fail"
                     video_name = f"seed{seed}_{status_tag}_{result['steps_used']}steps.mp4"
-                    video_path = (shared_dir / video_name) if is_multi else (logger.run_dir / video_name)
+                    video_path = run_dir / video_name
                     saved = _save_video(frames, video_path, args.video_fps)
                     if saved:
-                        print(f"  Video saved: {video_path}")
+                        print(f"  Video: {video_path}")
             except Exception as exc:
                 print(f"  Video error: {exc}")
-                # Fall back to non-video execution
                 with PandaPickPlaceEnv(config) as env:
                     result = run_episode_from_graph(env, graph, logger, max_steps=args.steps)
         else:
             with PandaPickPlaceEnv(config) as env:
                 result = run_episode_from_graph(env, graph, logger, max_steps=args.steps)
 
-        # Save result JSON (into shared folder for multi-seed)
-        result_name = f"result_seed{seed}.json" if is_multi else "execution_result.json"
-        if is_multi:
-            import json as _json
-            (shared_dir / result_name).write_text(_json.dumps(result, indent=2))
-        else:
-            logger.save_json("execution_result.json", result)
-        logger.close()
+        # Save result JSON
+        result_name = f"result_seed{seed}.json" if is_multi else "result.json"
+        (run_dir / result_name).write_text(json.dumps(result, indent=2))
 
         status = "SUCCESS" if result["success"] else "FAIL"
         print(
@@ -629,9 +625,9 @@ def main() -> None:
             f"nodes={result['nodes_executed']}/{result['nodes_total']}"
         )
 
-    if is_multi:
-        print(f"\nAll videos saved to: {shared_dir}")
+    print(f"\nOutput: {run_dir}")
 
 
 if __name__ == "__main__":
     main()
+
