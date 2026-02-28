@@ -23,6 +23,12 @@ build/
 artifacts/
 feedback_assets/
 
+# Binary data (regenerated via collect-demos)
+demos/dataset.pkl
+
+# Source MP4s in media (only GIFs are committed)
+media/*.mp4
+
 # OS
 .DS_Store
 Thumbs.db

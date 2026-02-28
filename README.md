@@ -10,7 +10,7 @@ Language-Guided Task Abstraction for Robotic Manipulation in MuJoCo with Franka 
 <th> LLM Task Graph Execution</th>
 </tr>
 <tr>
-<td><img src="media/demo_seed0_scripted.gif" width="160" alt="Inverse Kinematics demo"/></td>
+<td><img src="media/demo_seed0_scripted.gif" width="400" alt="Inverse Kinematics demo"/></td>
 <td><img src="media/seed4_execution.gif" width="400" alt="LLM-driven task graph execution with node overlay"/></td>
 </tr>
 <tr>
@@ -98,21 +98,6 @@ Contacts alone can be unstable in early development, so grasp is simplified with
 Important implementation detail:
 - Before enabling weld, relative pose is written to weld `eq_data` (rel position + rel quaternion) to prevent teleport/impulsive jumps.
 
-## Debug observations and fixes
-
-Observed issue during visual debug:
-- In some runs, the robot appeared to go "under the floor" and simulation became unstable.
-
-Root cause:
-- The problem was not only target placement/workspace.
-- Main cause was collision filtering in the MJX Panda model: several collision geoms had no effective interaction with the floor.
-
-Applied fix:
-- Updated `mujoco_env/assets/franka_emika_panda/mjx_panda.xml` collision defaults to use `conaffinity=1` (while keeping `contype=0` to avoid aggressive self-collisions), so links correctly collide with floor/objects.
-- Tightened workspace sampling in `mujoco_env/env.py` to keep targets/goals in a more reachable region:
-  - `workspace_low = [0.42, -0.24, 0.05]`
-  - `workspace_high = [0.70, 0.24, 0.60]`
-
 ## Segmentation — Rule-Based Primitive Detection
 
 The segmentation module (`segmentation/segment.py`) takes a raw trajectory (list of observation dicts from `collect_demos.py`) and labels each timestep with a **primitive** — a high-level description of what the robot is doing at that moment. Consecutive steps with the same label are merged into segments.
@@ -178,13 +163,13 @@ dataset.pkl ──► segment.py ──► primitives ──► prompt.py ──
 Offline deterministic fallback (no API key needed):
 
 ```bash
-uv run generate-task-graph --primitives-json artifacts/primitives.json --output artifacts/task_graph.json
+uv run generate-task-graph --segments-json artifacts/segments.json --output artifacts/task_graph.json
 ```
 
 With Gemini API:
 
 ```bash
-uv run generate-task-graph --primitives-json artifacts/primitives.json --output artifacts/task_graph.json --api-key-env GEMINI_API_KEY
+uv run generate-task-graph --segments-json artifacts/segments.json --output artifacts/task_graph.json --api-key-env GEMINI_API_KEY
 ```
 
 ### How It Works
@@ -196,9 +181,9 @@ A prompt is built from the primitive sequence that instructs the LLM to:
 - Preserve temporal ordering from the primitives.
 
 **Step 2 — LLM Call or Fallback** (`generate_task_graph.py`):
-- If `GEMINI_API_KEY` is set → calls Gemini (`gemini-2.0-flash` by default), extracts JSON from the response, validates it.
-- If validation fails → **retries** up to 3 times with the same prompt.
-- If no API key or all retries fail → deterministic **stub fallback** that maps primitives 1:1 to graph nodes.
+- If `GEMINI_API_KEY` is set → calls Gemini (`gemini-2.5-flash` by default), extracts JSON from the response, validates it.
+- If validation fails → **retries** up to 3 times with exponential backoff.
+- If no API key or all retries fail → deterministic **stub fallback** that detects pick-and-place intent and emits the canonical 6-node task graph.
 
 **Step 3 — Validation**:
 The JSON is validated against a strict schema using **Pydantic** models:
@@ -225,7 +210,7 @@ The JSON is validated against a strict schema using **Pydantic** models:
     {"from": "3", "to": "4"},
     {"from": "4", "to": "5"}
   ],
-  "metadata": {"source": "gemini-2.0-flash"}
+  "metadata": {"generator": "gemini", "model_name": "gemini-2.5-flash"}
 }
 ```
 
@@ -243,7 +228,7 @@ The JSON is validated against a strict schema using **Pydantic** models:
 
 ### Notes
 - The API key is read from an environment variable (default: `GEMINI_API_KEY`).
-- The value of the LLM is that Gemini can **merge, reorder, or add semantic context** to the nodes. The deterministic fallback is a straight 1:1 translation that always works but adds no intelligence.
+- The value of the LLM is that Gemini can **deduplicate noisy primitives, correct ordering, and add missing nodes** (e.g. `open_gripper`). The deterministic fallback recognizes pick-and-place patterns and emits the correct canonical sequence.
 - The stub fallback is always available for offline testing and CI.
 
 ---

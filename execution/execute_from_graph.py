@@ -553,6 +553,8 @@ def main() -> None:
         run_dir = date_dir / f"run_{now.strftime('%H%M%S')}_seed{args.seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    import mujoco as mj
+
     for seed in seeds:
         render_mode = bool(args.render and not args.headless)
         # Disable env-level logging to avoid extra env_* folders
@@ -568,7 +570,6 @@ def main() -> None:
         logger = StructuredLogger(output_dir=run_dir, run_name="log", enabled=False)
 
         # Set up video capture if requested
-        import mujoco as mj
         frames: list[np.ndarray] = []
         step_counter = [0]
 
