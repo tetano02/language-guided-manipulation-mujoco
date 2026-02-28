@@ -15,7 +15,7 @@ Language-Guided Task Abstraction for Robotic Manipulation in MuJoCo with Franka 
 </tr>
 <tr>
 <td>Scripted IK controller executing a <b>fixed trajectory</b>: positions are hardcoded at compile time.</td>
-<td>Gemini 2.5 Flash generates a task graph from noisy segmentation: the robot <b>generalizes to unseen layouts</b>.</td>
+<td>Gemini 2.5 Flash generates a task graph (above in the video) from noisy segmentation: the robot <b>generalizes to unseen layouts</b></td>
 </tr>
 </table>
 
