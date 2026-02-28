@@ -1,4 +1,4 @@
-# MujocoLLM
+# Mujoco LLM Task Abstraction
 
 Language-Guided Task Abstraction for Robotic Manipulation in MuJoCo with Franka Panda.
 
