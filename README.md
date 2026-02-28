@@ -10,7 +10,7 @@ Language-Guided Task Abstraction for Robotic Manipulation in MuJoCo with Franka 
 <th> LLM Task Graph Execution</th>
 </tr>
 <tr>
-<td><img src="media/demo_seed0_scripted.gif" width="160" alt="Inverse Kinematics demo"/></td>
+<td><img src="media/demo_seed0_scripted.gif" width="400" alt="Inverse Kinematics demo"/></td>
 <td><img src="media/seed4_execution.gif" width="400" alt="LLM-driven task graph execution with node overlay"/></td>
 </tr>
 <tr>
