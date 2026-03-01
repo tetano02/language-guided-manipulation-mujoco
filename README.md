@@ -74,9 +74,9 @@ The project uses an `EE-first` controller:
 
 IK is solved with damped least squares (DLS):
 
-```text
-dq = J^T (J J^T + lambda^2 I)^(-1) e
-```
+$$
+dq = J^T (J J^T + \lambda^2 I)^{-1} e
+$$
 
 Where:
 - `J` is the site Jacobian of the gripper (`mj_jacSite`).
